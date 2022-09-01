@@ -15,7 +15,6 @@ import random
 
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.python.ops.ragged import ragged_array_ops
 
 
 class RandomDeletion(keras.layers.Layer):
@@ -25,8 +24,9 @@ class RandomDeletion(keras.layers.Layer):
     augmentation as described in the paper [EDA: Easy Data Augmentation
     Techniques for Boosting Performance on Text Classification Tasks]
     (https://arxiv.org/pdf/1901.11196.pdf). The layer expects the inputs to be
-    pretokenized so that each token can be individually treated as a possible
-    candidate for deletion.
+    pre-split into token level inputs. This allows control over the level of
+    augmentation, you can split by character for character level swaps, or by
+    word for word level swaps.
 
     Input should be either a `tf.RaggedTensor` or a dense `tf.Tensor`, and
     either rank-1 or rank-2.
@@ -99,8 +99,8 @@ class RandomDeletion(keras.layers.Layer):
     ...     skip_py_fn=skip_py_fn, seed=42)
     >>> augmented=augmenter(inputs)
     >>> tf.strings.reduce_join(augmented, separator=" ", axis=-1)
-    <tf.Tensor: shape=(2,), dtype=string, numpy=array([b'Hey I', b'and'],
-    dtype=object)>
+    <tf.Tensor: shape=(2,), dtype=string,
+    numpy=array([b'Hey I', b'and Tensorflow'], dtype=object)>
     """
 
     def __init__(
@@ -133,6 +133,11 @@ class RandomDeletion(keras.layers.Layer):
         self.skip_list = skip_list
         self.skip_fn = skip_fn
         self.skip_py_fn = skip_py_fn
+        if self.max_deletions is not None and self.max_deletions < 0:
+            raise ValueError(
+                "max_deletions must be non-negative."
+                f"Received max_deletions={max_deletions}."
+            )
 
         if self.rate > 1 or self.rate < 0:
             raise ValueError(
@@ -201,12 +206,12 @@ class RandomDeletion(keras.layers.Layer):
         if skip_masks is not None:
             skip_masks = tf.logical_not(skip_masks)
             skip_masks.set_shape([None])
-            positions = ragged_array_ops.boolean_mask(
+            positions = tf.ragged.boolean_mask(
                 positions, inputs.with_flat_values(skip_masks)
             )
 
         # Figure out how many we are going to select.
-        token_counts = tf.cast(inputs.row_lengths(), "float32")
+        token_counts = tf.cast(positions.row_lengths(), "float32")
         num_to_select = tf.random.stateless_binomial(
             shape=tf.shape(token_counts),
             seed=self._generator.make_seeds()[:, 0],
